@@ -70,7 +70,6 @@ func printEntry(e entry, i int) {
 	)
 }
 
-//returns what to scan
 func predict(step int) {
 	predicted := make(map[string]bool);
 	for i := 0; i < id; i++ {
