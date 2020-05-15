@@ -36,16 +36,89 @@ type entry struct {
 	start int;
 	end   int;
 	hist  []int;
-	step  int;
+	id    int;
+	phase string;
 }
 
-var chart = make([]entry, 1000);
+func (e *entry) notFinished() bool {
+	return (len(e.rule.after) != 0);
+}
+
+func (e *entry) predictable() bool {
+	if !e.notFinished() {
+		return false;
+	}
+	N := e.rule.after[0];
+	_, ok := terminals[N];
+	if ok {
+		return false;
+	}
+	return true;
+}
+
+func (e *entry) addTo(step int) {
+	if e.duplicate(step) {
+		return;
+	}
+	e.id = id;
+	id++;
+	c.steps[step][c.entries[step]] = *e;
+	c.entries[step]++;
+}
+
+func (e *entry) duplicate(step int) bool{
+	for i := 0; i < c.entries[step]; i++ {
+		f := c.steps[step][i];
+		a := (e.rule.rule == f.rule.rule);
+		b := equal(e.rule.before, f.rule.before);
+		c := equal(e.rule.after, f.rule.after);
+		d := (e.start == f.start) && (e.end == f.end);
+		e := equalInt(e.hist, f.hist);
+		if a && b && c && d && e {
+			return true;
+		}
+	}
+	return false;
+}
+
+func equal(a, b []string) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, v := range a {
+        if v != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+func equalInt(a, b []int) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, v := range a {
+        if v != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+type chart struct {
+	steps [][]entry;
+	entries []int;
+}
+
+var c = chart {};
 var id = 0;
 
-func print() {
-	fmt.Println("STEP| ID | RULE          |(start,end)| HIST     ");
-	for i := 0; i < id; i++ {
-		printEntry(chart[i], i);
+func print(steps int) {
+	fmt.Println("STEP|ID | RULE          |(start,end)|PHASE| HIST     ");
+	for i := 0; i < steps; i++ {
+		for j := 0; j < c.entries[i]; j++ {
+			printEntry(c.steps[i][j], i);
+		} 
 	}
 }
 
@@ -59,197 +132,116 @@ func printEntry(e entry, i int) {
 		a += " "+s;
 	}
 	s := b + "." + a;
-	fmt.Printf("%4d|%3d|%2v->%11v| (%4d,%2d) | %v\n",
-		e.step,
-		i, 
+	fmt.Printf("%4d|%3d|%2v->%11v| (%4d,%2d) |  %1v  | %v\n",
+		i,
+		e.id,
 		e.rule.rule, 
 		s, 
 		e.start, 
 		e.end,
+		e.phase,
 		e.hist,
 	)
 }
 
-func predict(step int) {
-	predicted := make(map[string]bool);
-	for i := 0; i < id; i++ {
-		if chart[i].step != step {
-			continue;
-		} 
-		if len(chart[i].rule.after) == 0 {
-			continue;
-		}
-		N := chart[i].rule.after[0];
-		_, ok := predicted[N];
-		if ok {
-			continue;
-		}
-		predicted[N] = true;
-		_, ok = terminals[N];
-		if ok {
-			continue;
-		}
-		//not yet predicted and not a special terminal node
-		rulz := rules[N]; 
-		for _, body := range(rulz) {
-			chart[id] = entry{
-				progress{
-					N,
-					[]string{},
-					body,
-				},
-				step,
-				step,
+func (e *entry) predict(step int) {
+	N := e.rule.after[0];
+	rulz := rules[N]; 
+	for _, body := range(rulz) {
+		e := entry{
+			progress{
+				N,
+				[]string{},
+				body,
+			},
+			e.end,
+			e.end,
+			[]int{},
+			0,
+			"P",
+		};
+		e.addTo(step);
+	}
+}
+
+func (e *entry) scan(word string, step int) {
+	N := e.rule.after[0];
+	words := terminals[N];
+	for _, w := range(words) {
+		if w == word {
+			e := entry {
+				progress {N, []string{word}, []string{}},
+				e.start,
+				e.end + 1,
 				[]int{},
-				step,
+				0,
+				"S",
 			};
-			id++;
+			e.addTo(step + 1);
 		}
 	}
 }
 
-func scan(word string, step int) {
-	scaned := make(map[string]bool);
-	for i := 0; i < id; i++ {
-		if chart[i].step != step {
-			continue;
-		} 
-		if len(chart[i].rule.after) == 0 {
-			continue;
-		}
-		N := chart[i].rule.after[0];
-		_, ok := scaned[N];
-		if ok {
-			continue;
-		}
-		scaned[N] = true;
-		var words []string;
-		words, ok = terminals[N];
-		if !ok {
-			continue;
-		}
-		for _, w := range(words) {
-			if w == word {
-				chart[id] = entry {
-					progress {N, []string{word}, []string{}},
-					chart[i].start,
-					step + 1,
-					[]int{},
-					step,
-				};
-				id++;
-			}
-		}
-	}
-}
-
-func complete(j int, step int) {
-	found := true;
-	completed := make(map[int]bool);
-	for found {
-		found = false;
-		for i := 0; i < id; i++ {
-			if chart[i].step != j && chart[i].step != step {
+func (e *entry) complete(step int) {
+	for _, s := range(c.steps) {
+		for _, f := range(s) {
+			if len(f.rule.after) == 0 {
 				continue;
 			}
-			if(len(chart[i].rule.after) > 0) {
+			if f.rule.after[0] != e.rule.rule {
+				continue;
+			} 
+			if f.end != e.start {
 				continue;
 			}
-			_, ok := completed[i];
-			if ok {
-				continue;
+			new_entry := entry {
+				progress{
+					f.rule.rule,
+					append(f.rule.before, e.rule.rule),
+					f.rule.after[1:],
+				},
+				f.start,
+				e.end,
+				append(f.hist, e.id),
+				0,
+				"C",
 			}
-			completed[i] = true;
-			found = true;
-			rule := chart[i].rule;
-			for a := 0; a < id; a++ {
-				if chart[a].end != chart[i].start {
-					continue;
-				}
-				if len(chart[a].rule.after) == 0 {
-					continue;
-				}
-				if chart[a].rule.after[0] != rule.rule {
-					continue;
-				}
-				var e = entry{
-					progress{
-						chart[a].rule.rule,
-						append(chart[a].rule.before, rule.rule),
-						chart[a].rule.after[1:],
-					},
-					chart[a].start,
-					chart[i].end,
-					append(chart[a].hist, i),
-					step,
-				}
-				if (!duplicate(e)) {
-					chart[id] = e;
-					id++;
-				}
-				
-			}
+			new_entry.addTo(step);
 		}
 	} 
 }
 
-func duplicate(e entry) bool{
-	for i := 0; i < id; i++ {
-		f := chart[i];
-		a := (e.rule.rule == f.rule.rule);
-		b := (len(e.rule.before) == len(f.rule.before));
-		c := (len(e.rule.after) == len(f.rule.after));
-		d := (e.start == f.start) && (e.end == f.end);
-		e := equal(e.hist, f.hist);
-		if a && b && c && d && e {
-			return true;
-		}
-	}
-	return false;
-}
-
-func equal(a, b []int) bool {
-    if len(a) != len(b) {
-        return false
-    }
-    for i, v := range a {
-        if v != b[i] {
-            return false
-        }
-    }
-    return true
-}
-
 func main() {
+	words := []string{"they", "can", "fish", "in", "rivers","in", "December", "$"};
+	c.steps = make([][]entry, len(words) + 1);
+	c.entries = make([]int, len(words) + 1);
+	for i := 0; i < len(words) + 1; i++ {
+		c.entries[i] = 0;
+		c.steps[i] = make([]entry, 50);
+	}
 	//initialise
-	chart[id] = entry{
+	e := entry{
 		progress{"S",[]string{},[]string{"NP","VP"}},
 		0,
 		0,
 		[]int{},
 		0,
+		"C",
 	}
-	id++;
-	predict(0);
-	scan("they", 0);
-	complete(0, 1);
-	predict(1);
-	scan("can", 1);
-	complete(1, 2);
-	predict(2);
-	scan("fish", 2);
-	complete(2, 3);
-	predict(3);
-	scan("in", 3);
-	complete(3, 4);
-	predict(4);
-	scan("rivers", 4);
-	complete(4, 5);
-	predict(5);
-	scan("in", 5);
-	complete(5, 6);
-	predict(6);
-	scan("December", 6);
-	complete(6, 7);
-	print();
+	e.addTo(0);
+	for i, w := range(words) {
+		for j := 0; j < c.entries[i]; j++ {
+			e := c.steps[i][j];
+			if (e.notFinished()) {
+				if (e.predictable()) {
+					e.predict(i);
+				} else {
+					e.scan(w, i)
+				}
+			} else {
+				e.complete(i);
+			}
+		}
+	}
+	print(len(words));
 }
